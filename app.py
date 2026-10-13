@@ -46,28 +46,28 @@ INVALID_FILE_PATH = "invalid_numbers_session.csv"
 st.set_page_config(page_title="Ultra-Fast Sequential Deduplicator", layout="wide")
 
 # Persistent Session State initialize karna
-if 'seen_numbers' not in st.session_state:
-    st.session_state.seen_numbers = set()
+if 'global_seen_numbers' not in st.session_state:
+    st.session_state.global_seen_numbers = set()
 if 'state_counts' not in st.session_state:
     st.session_state.state_counts = Counter()
 if 'file_results' not in st.session_state:
-    st.session_state.file_results = {} # Download empty hone ka bug yahan fix hoga
+    st.session_state.file_results = {}
 
 def clear_session():
-    st.session_state.seen_numbers = set()
+    st.session_state.global_seen_numbers = set()
     st.session_state.state_counts = Counter()
     st.session_state.file_results = {}
     if os.path.exists(INVALID_FILE_PATH):
         os.remove(INVALID_FILE_PATH)
 
-st.title("🚀 Sequential Number Deduplicator")
-st.markdown("Multiple files upload karein, unko ID (Order) dein, aur **Process** par click karein. Files usi sequence mein deduplicate hongi.")
+st.title("🚀 Strict Sequential Number Deduplicator")
+st.markdown("Multiple files upload karein, unko ID (Order) dein, aur **Process** par click karein. Files usi sequence mein deduplicate hongi (File 2 deduplicates against File 1, File 3 deduplicates against 1 & 2).")
 
 col1, col2 = st.columns([3, 1])
 with col1:
-    st.success(f"**Total Global Unique Numbers in Session:** {len(st.session_state.seen_numbers)}")
+    st.success(f"**Total Global Unique Numbers in Active Session:** {len(st.session_state.global_seen_numbers)}")
 with col2:
-    if st.button("🗑️ Clear Entire Session Data", use_container_width=True):
+    if st.button("🗑️ Clear Session Data", use_container_width=True):
         clear_session()
         st.rerun()
 
@@ -76,102 +76,97 @@ uploaded_files = st.file_uploader("Upload Phone Numbers Files (CSV/TXT)", type=[
 
 if uploaded_files:
     st.markdown("---")
-    st.subheader("🔢 Assign Order (Processing Sequence)")
-    st.info("Jis file ka number 1 hoga wo pehly process hogi. Jo number 2 hogi wo file 1 ke numbers se dedupe hogi, aur isi tarha sequence chalega.")
+    st.subheader("🔢 Assign Order (Strict Sequence)")
+    st.info("Jis file ka order 1 hai, wo sabse pehle process hogi aur base banegi. Order 2 uske against check hogi aur bache hue naye numbers base mein add honge. Order 3 dono ke against check hogi, etc.")
     
     file_order_data = []
     
-    # Har file ke samne order input lagana
     for i, file in enumerate(uploaded_files):
         c1, c2 = st.columns([3, 1])
         with c1:
             st.write(f"📄 **{file.name}**")
         with c2:
-            # Default value array index ke hisab se 1, 2, 3.. set hai
             order = st.number_input("Order", min_value=1, value=i+1, key=f"order_{file.name}", label_visibility="collapsed")
             
         file_order_data.append({'file_obj': file, 'name': file.name, 'order': order})
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Processing Button
-    if st.button("⚙️ Process Files in Sequence", type="primary", use_container_width=True):
+    if st.button("⚙️ Process Files Strictly in Sequence", type="primary", use_container_width=True):
         
-        # User ke diye gaye order ke hisab se files sort karna
+        # Files ko user ke order ke hisaab se sort karna zaroori hai sequence ke liye
         file_order_data.sort(key=lambda x: x['order'])
         
-        with st.spinner("Processing files sequence-wise at extreme speed..."):
+        with st.spinner("Processing files sequence-wise and deduplicating..."):
             
             for item in file_order_data:
                 file = item['file_obj']
                 file_name = item['name']
-                
-                # File pointer ko start par reset karna lazmi hai warna 0 numbers aate hain
                 file.seek(0)
                 
                 valid_unique_list = []
                 
-                # 'sep='\n'' use karne se har row ek single line ke tor par parhi jayegi, CSV ka koi error nahi ayega
+                # Chunk size chota rakha hai taake RAM mein masla na aye (1GB file k liye best)
                 for chunk in pd.read_csv(file, chunksize=500000, header=None, names=['raw_line'], usecols=[0], dtype=str, encoding='utf-8', on_bad_lines='skip'):
                     chunk = chunk.dropna()
                     
-                    # Sirf digits extract karna
+                    # 1. Clean non-digits
                     clean_series = chunk['raw_line'].astype(str).str.replace(r'\D', '', regex=True)
                     
-                    # USA Country code bug fix (Agar 11 digits hain aur 1 se start ho raha hai to 1 hata do)
+                    # 2. USA Country Code check (Remove leading 1 if total len is 11)
                     cond = (clean_series.str.len() == 11) & (clean_series.str.startswith('1'))
                     chunk['clean'] = np.where(cond, clean_series.str[1:], clean_series)
                     
-                    # Validation: Ab check karo ke 10 digits hain ya nahi
+                    # 3. Valid Length Check (Exactly 10)
                     is_valid = chunk['clean'].str.len() == 10
                     
                     valid_chunk = chunk[is_valid].copy()
                     invalid_chunk = chunk[~is_valid]
                     
-                    # Invalid numbers ko real-time save karna
+                    # Append invalid
                     if not invalid_chunk.empty:
                         invalid_chunk[['raw_line']].to_csv(INVALID_FILE_PATH, mode='a', index=False, header=False)
                         
                     if not valid_chunk.empty:
-                        # Pehly chunk ke andar ki duplication hatayein
+                        # 4. Intra-chunk Deduplication (Ek hi chunk k andar ke duplicates khatam karo)
                         valid_chunk = valid_chunk.drop_duplicates(subset=['clean'])
                         
-                        # Phir pichli saari files (global memory) se dedupe karein
-                        mask = ~valid_chunk['clean'].isin(st.session_state.seen_numbers)
-                        new_unique = valid_chunk[mask]
+                        # 5. Inter-file & Inter-chunk Deduplication (Pichli saari files + ab tak ke purane chunks k khilaf check karo)
+                        # MAGIC HAPPENS HERE: strictly filter against ALL previously seen numbers
+                        mask = ~valid_chunk['clean'].isin(st.session_state.global_seen_numbers)
+                        new_unique_strictly = valid_chunk[mask]
                         
-                        if not new_unique.empty:
-                            new_nums = new_unique['clean'].tolist()
+                        if not new_unique_strictly.empty:
+                            new_nums = new_unique_strictly['clean'].tolist()
                             
-                            # Global Memory Update
-                            st.session_state.seen_numbers.update(new_nums)
-                            
-                            # Current File Memory Update
+                            # Update lists
+                            st.session_state.global_seen_numbers.update(new_nums)
                             valid_unique_list.extend(new_nums)
                             
                             # US States Update
-                            states = new_unique['clean'].str[:3].map(AREA_CODES).fillna('Unknown')
+                            states = new_unique_strictly['clean'].str[:3].map(AREA_CODES).fillna('Unknown')
                             st.session_state.state_counts.update(states.tolist())
                 
-                # Har file ke unique numbers Session State mein mehfooz kar lenge (Taki download empty na ho)
+                # Har file completely sequence aur previous saari files ke against clean ho kar is dictionary mein save hogi
                 st.session_state.file_results[file_name] = valid_unique_list
                 
-        st.success("✅ All files processed successfully!")
+        st.success("✅ Strict Sequence Deduplication Complete! Ab next block me check karein.")
+        st.rerun() # Rerun zaroori tha taake updated sets uper display mein foran show ho jayen
 
-# Download Section
-# Ye hissa if button ke bahir hai taki Streamlit refresh hone par data gayab na ho
+# Download Section (Outside button logic so it persists)
 if st.session_state.file_results:
     st.markdown("---")
-    st.subheader("📥 Download Processed Files")
+    st.subheader("📥 Download Processed & Completely Deduplicated Files")
+    st.info("Har file pichli saari files ke against deeply clean hui hai. Jo numbers is file me bache hain, wo baaqi kisi uper wali file mein maujood nahi hain.")
     
     for f_name, u_nums in st.session_state.file_results.items():
         df_out = pd.DataFrame(u_nums, columns=['Valid_Unique_Numbers'])
         csv_data = df_out.to_csv(index=False).encode('utf-8')
         
         st.download_button(
-            label=f"⬇️ Download {f_name} ({len(u_nums)} unique numbers)",
+            label=f"⬇️ Download {f_name} ({len(u_nums)} extremely unique numbers)",
             data=csv_data,
-            file_name=f"Cleaned_{f_name}",
+            file_name=f"DeepCleaned_{f_name}",
             mime="text/csv",
             key=f"dl_{f_name}"
         )
@@ -179,7 +174,7 @@ if st.session_state.file_results:
     if os.path.exists(INVALID_FILE_PATH):
         with open(INVALID_FILE_PATH, "rb") as f:
             st.download_button(
-                label="🚨 Download ALL Invalid Numbers (Session)",
+                label="🚨 Download ALL Invalid Numbers (Combined)",
                 data=f,
                 file_name="All_Invalid_Numbers_Session.csv",
                 mime="text/csv"
@@ -188,7 +183,7 @@ if st.session_state.file_results:
 # US States Report Section
 if st.session_state.state_counts:
     st.markdown("---")
-    st.subheader("📊 US States Report (Overall Session)")
+    st.subheader("📊 US States Global Stats")
     state_df = pd.DataFrame.from_dict(st.session_state.state_counts, orient='index').reset_index()
     state_df.columns = ['State', 'Count']
     state_df = state_df.sort_values(by='Count', ascending=False)
