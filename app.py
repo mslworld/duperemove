@@ -112,7 +112,7 @@ if uploaded_files:
                 valid_unique_list = []
                 
                 # 'sep='\n'' use karne se har row ek single line ke tor par parhi jayegi, CSV ka koi error nahi ayega
-                for chunk in pd.read_csv(file, chunksize=500000, header=None, sep='\n', names=['raw_line'], dtype=str, encoding='utf-8', on_bad_lines='skip'):
+                for chunk in pd.read_csv(file, chunksize=500000, header=None, names=['raw_line'], usecols=[0], dtype=str, encoding='utf-8', on_bad_lines='skip'):
                     chunk = chunk.dropna()
                     
                     # Sirf digits extract karna
