@@ -1,51 +1,63 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Page layout ko wide set karna taaki multiple columns fit aa sakein
-st.set_page_config(layout="wide", page_title="Multi-Screen Browser Tool")
+# Page layout ko wide set karna
+st.set_page_config(layout="wide", page_title="MSL SEARCH TOOL")
 
-st.title("🌐 Dynamic Multi-Screen Browser Tool")
+# Top Header Layout (Title aur Row/Col Inputs)
+header_col1, header_col2, header_col3 = st.columns([2, 1, 1])
 
-# Search bar / URL input
-st.markdown("### 🔍 Search / Enter URL")
-url = st.text_input(
-    "Website ka URL enter karein (e.g., https://www.wikipedia.org):", 
-    "https://www.wikipedia.org"
-)
-
-# Dynamic Rows aur Columns ke liye input
-st.markdown("### 🎛️ Grid Layout Settings")
-col1, col2 = st.columns(2)
-
-with col1:
-    # Aap isko apni marzi se jitna chahein badha sakte hain
-    rows = st.number_input("Rows ki tadad:", min_value=1, value=2, step=1)
-
-with col2:
-    # Limit nahi hai, aap unlimited columns set kar sakte hain
-    cols = st.number_input("Columns ki tadad:", min_value=1, value=5, step=1)
+with header_col1:
+    st.markdown("### MSL SEARCH TOOL")
+with header_col2:
+    rows = st.number_input("Rows", min_value=1, value=2, step=1)
+with header_col3:
+    cols = st.number_input("Column", min_value=1, value=5, step=1)
 
 st.markdown("---")
 
-# Grid generate karne ka logic
-if url:
-    screen_count = 1
-    for r in range(int(rows)):
-        # Streamlit mein dynamic columns banana
-        columns_layout = st.columns(int(cols))
-        
-        for c in range(int(cols)):
-            with columns_layout[c]:
-                # Har screen ka title aur iframe
-                st.markdown(f"**Screen {screen_count}**")
-                
-                # Streamlit components ka use karke external URL embed karna
-                try:
-                    components.iframe(url, height=400, scrolling=True)
-                except Exception as e:
-                    st.error("Website load hone mein masla hai.")
-                
-                screen_count += 1
+# Dynamic Grid Generation
+screen_count = 1
 
-# Note: Kuch badi websites (jaise Google, Facebook) security reasons (X-Frame-Options) 
-# ki wajah se iframe mein open nahi hoti hain. Aise mein un sites ke search APIs use karne padte hain.
+# Rows create karna
+for r in range(int(rows)):
+    # Columns create karna
+    grid_cols = st.columns(int(cols))
+    
+    for c in range(int(cols)):
+        with grid_cols[c]:
+            # Har screen ke liye individual search bar
+            search_query = st.text_input(
+                "Google Search Here", 
+                placeholder="Google Search Here",
+                key=f"search_{screen_count}",
+                label_visibility="collapsed" # Label hide kar ke sirf placeholder dikhane ke liye
+            )
+            
+            # Container for the screen content
+            with st.container():
+                if search_query:
+                    # Agar user direct URL type nahi karta, toh usko search query bana dein
+                    if not search_query.startswith("http"):
+                        # Note: Google iframe mein block hota hai, isliye hum Bing search embed kar rahe hain 
+                        # jo iframes mein achi tarah kaam karta hai. Aap custom iframe-friendly URLs use kar sakte hain.
+                        url = f"https://www.bing.com/search?q={search_query}"
+                    else:
+                        url = search_query
+                    
+                    try:
+                        components.iframe(url, height=350, scrolling=True)
+                    except Exception as e:
+                        st.error("Error loading page")
+                else:
+                    # Agar search bar khali hai toh default "screen X" text dikhaye
+                    st.markdown(
+                        f"""
+                        <div style="height: 350px; display: flex; align-items: center; justify-content: center; border: 1px solid #ddd; border-radius: 5px;">
+                            <h3>screen {screen_count}</h3>
+                        </div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
+            
+            screen_count += 1
